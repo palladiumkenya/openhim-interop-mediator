@@ -11,7 +11,7 @@
         {
           "name": "OpenHIM Mediator EMR Interop Proxy Route",
           "primary": true,
-          "host": "localhost",
+          "host": "192.168.10.48",
           "port": "8300",
           "type": "http",
           "forwardAuthHeader": false
@@ -24,7 +24,7 @@
   "endpoints": [
     {
       "name": "OpenHIM Mediator  EMR Interop Proxy Route",
-      "host": "localhost",
+      "host": "192.168.10.48",
       "port": "8300",
       "type": "http"
     }

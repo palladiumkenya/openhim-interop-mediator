@@ -9,11 +9,11 @@ package org.openhim.mediator.emrInterop;
 import akka.actor.ActorSystem;
 import akka.event.Logging;
 import akka.event.LoggingAdapter;
-import org.apache.commons.io.FileUtils;
-import org.apache.commons.io.IOUtils;
+import org.apache.commons.compress.utils.IOUtils;
 import org.openhim.mediator.engine.*;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
@@ -40,7 +40,7 @@ public class MediatorMain {
         if (configPath!=null) {
             Properties props = new Properties();
             File conf = new File(configPath);
-            InputStream in = FileUtils.openInputStream(conf);
+            InputStream in = new FileInputStream(conf);
             props.load(in);
             IOUtils.closeQuietly(in);
 
