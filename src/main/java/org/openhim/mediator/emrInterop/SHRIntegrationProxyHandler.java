@@ -30,10 +30,13 @@ import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.impl.client.BasicCredentialsProvider;
 import org.apache.http.impl.client.HttpClients;
+import org.hl7.fhir.instance.model.api.IAnyResource;
 import org.hl7.fhir.instance.model.api.IBaseOperationOutcome;
 import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.r4.model.Bundle;
+import org.hl7.fhir.r4.model.Condition;
 import org.hl7.fhir.r4.model.Encounter;
+import org.hl7.fhir.r4.model.Identifier;
 import org.hl7.fhir.r4.model.Location;
 import org.hl7.fhir.r4.model.Observation;
 import org.hl7.fhir.r4.model.Patient;
@@ -49,6 +52,7 @@ import javax.annotation.Nonnull;
 import java.lang.reflect.InvocationTargetException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -202,39 +206,51 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
         IBaseResource resource = parser.parseResource(body);
         if (resource.getClass().getSimpleName().equals("Bundle")) {
             Bundle bundle = (Bundle) resource;
-            Bundle subjectResource = fetchPatientResource("MOH1667372638");
-            getPatientUpiNumber("3aa77935-7043-47d6-bc46-89b9ca4cb27d");
 
             if (bundle.hasEntry()) {
-                Reference subjectRef = new Reference();
-                if (subjectResource.hasEntry()) {
-                    subjectRef = createPatientReference((Patient) subjectResource.getEntry().get(0).getResource());
-                }
-                Reference practitionerRef = createPractitionerReferenceBase((Practitioner) fetchFhirResource("Practitioner", Constants.INTEROP_PROVIDER_UUID));
-                Encounter.EncounterParticipantComponent participantComponent = new Encounter.EncounterParticipantComponent();
-                participantComponent.setIndividual(practitionerRef);
 
-                Bundle facilityResource = fetchLocationResource("10538");
-                Location facility = new Location();
-                if (facilityResource.hasEntry()) {
-                    facility = (Location) facilityResource.getEntry().get(0).getResource();
-                }
-
+                Reference subjectReference = null;
+                Reference practitionerReference = null;
+                Reference facilityReference = null;
                 for (Bundle.BundleEntryComponent entry : bundle.getEntry()) {
                     String resourceType = entry.getResource().getResourceType().toString();
                     switch (resourceType) {
                         case "Observation":
                             Observation observation = (Observation) entry.getResource();
-                            observation.setSubject(subjectRef);
+                            if (subjectReference == null) {
+                                subjectReference = getResourceReference(observation.getSubject(), "Patient");
+                            }
+                            observation.setSubject(subjectReference);
                             entry.setResource(observation);
                             break;
                         case "Encounter":
                             Encounter encounter = (Encounter) entry.getResource();
-                            encounter.setSubject(subjectRef);
+                            if (subjectReference == null) {
+                                subjectReference = getResourceReference(encounter.getSubject(), "Patient");
+                            }
+                            if (practitionerReference == null) {
+                                practitionerReference = getResourceReference(encounter.getParticipantFirstRep().getIndividual(), "Practitioner");
+                            }
+                            if (facilityReference == null) {
+                                facilityReference = getResourceReference(encounter.getLocationFirstRep().getLocation(), "Location");
+                            }
+                            encounter.setSubject(subjectReference);
+//                            encounter.setParticipant(new ArrayList<>());
+                            encounter.getParticipantFirstRep().setIndividual(practitionerReference);
+                            encounter.getLocationFirstRep().setLocation(facilityReference);
                             entry.setResource(encounter);
-                            encounter.setParticipant(new ArrayList<>());
-                            encounter.addParticipant(participantComponent);
-                            encounter.getLocationFirstRep().setLocation(createLocationReference(facility));
+                            break;
+                        case "Condition":
+                            Condition condition = (Condition) entry.getResource();
+                            if (subjectReference == null) {
+                                subjectReference = getResourceReference(condition.getSubject(), "Patient");
+                            }
+                            if (practitionerReference == null) {
+                                practitionerReference = getResourceReference(condition.getRecorder(), "Practitioner");
+                            }
+                            condition.setSubject(subjectReference);
+                            condition.setRecorder(practitionerReference);
+                            entry.setResource(condition);
                             break;
                         default:
                             log.error("default logging");
@@ -259,6 +275,7 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
 
 //        forwardRequest(contents);
     }
+
 
     public void getPatientUpiNumber(String patientUuid) throws Exception {
         String url = "";
@@ -296,29 +313,52 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
         return sepUrl[sepUrl.length - 3];
     }
 
-    private Reference createPatientReference(@Nonnull Patient patient) {
-        Reference reference = new Reference().setReference("/Patient/" + getResourceUuid(patient.getId()))
-                .setType("Patient");
-        return reference;
-    }
+    public Reference getResourceReference(Reference reference, String resourceType) {
+        try {
+            String identifier = reference.getIdentifier().getValue();
 
-    private Reference createPractitionerReferenceBase(@Nonnull Practitioner practitioner) {
-        Reference reference = (new Reference()).setReference("Practitioner/" + getResourceUuid(practitioner.getId())).setType("Practitioner");
-        if (!practitioner.getName().isEmpty()) {
-            reference.setDisplay(practitioner.getName().get(0).getGivenAsSingleString());
+            IGenericClient client = getFhirClient();
+
+            Bundle bundleResource = null;
+
+            if (resourceType.equals("Patient")) {
+                bundleResource = client.search().forResource("Patient").where(Patient.IDENTIFIER.exactly().code(identifier))
+                        .returnBundle(Bundle.class).execute();
+            }
+            if (resourceType.equals("Practitioner")) {
+                bundleResource = client.search().forResource("Practitioner").where(Practitioner.IDENTIFIER.exactly().code(identifier))
+                        .returnBundle(Bundle.class).execute();
+            }
+            if (resourceType.equals("Location")) {
+                bundleResource = client.search().forResource("Location").where(Location.IDENTIFIER.exactly().code(identifier))
+                        .returnBundle(Bundle.class).execute();
+            }
+            ;
+
+            if (bundleResource.hasEntry()) {
+                return updateResourceReference(bundleResource, reference);
+            }
+            log.error("resource returning null" + bundleResource.hasEntry());
+            return null;
+        } catch (Exception e) {
+            log.error(String.format("Failed fetching FHIR resource %s", e));
+            return null;
         }
-
-        return reference;
     }
 
-    protected Reference createLocationReference(@Nonnull Location location) {
-        Reference reference = (new Reference()).setReference("Location/" + getResourceUuid(location.getId())).setType("Location");
-        if (!location.getName().isEmpty()) {
-            reference.setDisplay(location.getName());
+    private Reference updateResourceReference(@Nonnull IAnyResource resource, Reference reference) {
+        if (resource.getClass().getSimpleName().equals("Patient")) {
+            reference.setReference("/Patient/" + getResourceUuid(resource.getId()));
         }
-
+        if (resource.getClass().getSimpleName().equals("Practitioner")) {
+            reference.setReference("/Practitioner/" + getResourceUuid(resource.getId()));
+        }
+        if (resource.getClass().getSimpleName().equals("Location")) {
+            reference.setReference("/Location/" + getResourceUuid(resource.getId()));
+        }
         return reference;
     }
+
 
     private IGenericClient getFhirClient() {
         FhirContext fhirContextNew = FhirContext.forR4();
@@ -330,32 +370,6 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
         return client;
     }
 
-    public Bundle fetchPatientResource(String identifier) {
-        try {
-
-            IGenericClient client = getFhirClient();
-
-            Bundle resource = client.search().forResource("Patient").where(Patient.IDENTIFIER.exactly().code(identifier))
-                    .returnBundle(Bundle.class).execute();
-            log.error("resource " + resource.hasEntry());
-            return resource;
-        } catch (Exception e) {
-            log.error(String.format("Failed fetching FHIR resource %s", e));
-            return null;
-        }
-    }
-
-    public Bundle fetchLocationResource(String identifier) {
-        try {
-            IGenericClient client = getFhirClient();
-            Bundle resource = client.search().forResource("Location").where(Location.IDENTIFIER.exactly().code(identifier))
-                    .returnBundle(Bundle.class).execute();
-            return resource;
-        } catch (Exception e) {
-            log.error(String.format("Failed fetching FHIR resource %s", e));
-            return null;
-        }
-    }
 
     public Resource fetchFhirResource(String resourceType, String resourceId) {
         try {
@@ -506,13 +520,13 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
             loadFhirContext();
 
         } else if (msg instanceof FhirContextActor.FhirContextResponse) {
-            System.out.println("Process request and forward to upstream server" );
+            System.out.println("Process request and forward to upstream server");
 
             fhirContext = ((FhirContextActor.FhirContextResponse) msg).getResponseObject();
             processRequestWithContentsTwo();
 
         } else if (msg instanceof MediatorHTTPResponse) {
-            System.out.println("Get response from upstream server and propagate back to OpenHIM " );
+            System.out.println("Get response from upstream server and propagate back to OpenHIM ");
 
             response = (MediatorHTTPResponse) msg;
             processUpstreamResponse();
