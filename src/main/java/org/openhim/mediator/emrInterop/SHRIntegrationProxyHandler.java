@@ -130,7 +130,7 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
                 (String) config.getDynamicConfig().get("upstream-scheme"),
                 (String) config.getDynamicConfig().get("upstream-host"),
                 ((Double) config.getDynamicConfig().get("upstream-port")).intValue(),
-                "/test/fhir-server/api/v4/Patient",
+                "/test/fhir-server/api/v4/",
                 body,
                 headers,
                 copyParams(request.getParams())
@@ -169,7 +169,7 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
     private void forwardRequest(Contents contents) {
         Map<String, String> headers = copyHeaders(request.getHeaders());
         headers.put("Content-Type", "application/json");
-        headers.put("Authorization","Basic ZmhpcnVzZXI6Y2hhbmdlLXBhc3N3b3Jk");
+        headers.put("Authorization", "Basic ZmhpcnVzZXI6Y2hhbmdlLXBhc3N3b3Jk");
         forwardRequest(headers, contents.content);
     }
 
@@ -204,6 +204,7 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
     private void processRequestWithContents() throws Exception {
         String contentType = request.getHeaders().get("Content-Type");
         String body = request.getBody();
+
         IParser parser = fhirContext.newJsonParser();
         IBaseResource resource = parser.parseResource(body);
         if (resource.getClass().getSimpleName().equals("Bundle")) {
@@ -237,7 +238,7 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
                                 facilityReference = getResourceReference(encounter.getLocationFirstRep().getLocation(), "Location");
                             }
                             encounter.setSubject(subjectReference);
-//                            encounter.setParticipant(new ArrayList<>());
+                            encounter.setParticipant(new ArrayList<>());
                             encounter.getParticipantFirstRep().setIndividual(practitionerReference);
                             encounter.getLocationFirstRep().setLocation(facilityReference);
                             entry.setResource(encounter);
@@ -275,9 +276,8 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
         }
 
 
-//        forwardRequest(contents);
+        forwardRequest(contents);
     }
-
 
     public void getPatientUpiNumber(String patientUuid) throws Exception {
         String url = "";
@@ -318,6 +318,7 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
     public Reference getResourceReference(Reference reference, String resourceType) {
         try {
             String identifier = reference.getIdentifier().getValue();
+            System.out.println("Resolve resource" + resourceType + "with identifier" + identifier);
 
             IGenericClient client = getFhirClient();
 
@@ -336,10 +337,11 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
                         .returnBundle(Bundle.class).execute();
             }
 
-            if (bundleResource.hasEntry()) {
+            if (bundleResource.getEntry().size() > 0) {
                 return updateResourceReference(bundleResource, reference);
+            } else {
+                System.out.println("Resource" + resourceType + "with identifier" + identifier + " was not found");
             }
-            log.error("resource returning null" + bundleResource.hasEntry());
             return null;
         } catch (Exception e) {
             log.error(String.format("Failed fetching FHIR resource %s", e));
@@ -524,7 +526,7 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
             System.out.println("Process request and forward to upstream server");
 
             fhirContext = ((FhirContextActor.FhirContextResponse) msg).getResponseObject();
-            processRequestWithContentsTwo();
+            processRequestWithContents();
 
         } else if (msg instanceof MediatorHTTPResponse) {
             System.out.println("Get response from upstream server and propagate back to OpenHIM ");
