@@ -15,9 +15,12 @@ import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.parser.DataFormatException;
 import ca.uhn.fhir.parser.IParser;
 import ca.uhn.fhir.rest.client.api.IGenericClient;
+import ca.uhn.fhir.rest.client.interceptor.BearerTokenAuthInterceptor;
 import ca.uhn.fhir.util.OperationOutcomeUtil;
 import ca.uhn.fhir.validation.FhirValidator;
 import ca.uhn.fhir.validation.ValidationResult;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import org.apache.commons.codec.binary.Base64;
 import org.apache.commons.lang3.tuple.Pair;
 import org.apache.http.HttpHeaders;
@@ -36,24 +39,40 @@ import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.Condition;
 import org.hl7.fhir.r4.model.Encounter;
-import org.hl7.fhir.r4.model.Identifier;
 import org.hl7.fhir.r4.model.Location;
 import org.hl7.fhir.r4.model.Observation;
 import org.hl7.fhir.r4.model.Patient;
 import org.hl7.fhir.r4.model.Practitioner;
 import org.hl7.fhir.r4.model.Reference;
 import org.hl7.fhir.r4.model.Resource;
+import org.openhim.mediator.emrInterop.util.MediatorConstants;
+import org.openhim.mediator.emrInterop.util.OAuthToken;
 import org.openhim.mediator.engine.MediatorConfig;
 import org.openhim.mediator.engine.messages.FinishRequest;
 import org.openhim.mediator.engine.messages.MediatorHTTPRequest;
 import org.openhim.mediator.engine.messages.MediatorHTTPResponse;
 
 import javax.annotation.Nonnull;
+import java.io.BufferedReader;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStreamReader;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.io.OutputStream;
+import java.io.Serializable;
 import java.lang.reflect.InvocationTargetException;
+import java.net.HttpURLConnection;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -211,6 +230,9 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
             Bundle bundle = (Bundle) resource;
 
             if (bundle.hasEntry()) {
+
+                System.out.println("TOKEN" + generateToken(MediatorConstants.CLIENT_ID, MediatorConstants.CLIENT_SECRET,
+                        MediatorConstants.TOKEN_URL, MediatorConstants.SCOPE));
 
                 Reference subjectReference = null;
                 Reference practitionerReference = null;
@@ -370,6 +392,26 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
         fhirContextNew.getRestfulClientFactory().setSocketTimeout(200 * 1000);
 
         IGenericClient client = fhirContextNew.getRestfulClientFactory().newGenericClient(serverUrl);
+        return client;
+    }
+
+    private IGenericClient getSourceClient(String token) throws MalformedURLException {
+
+        String scheme = config.getDynamicConfig().get("upstream-scheme").toString();
+        String host = config.getDynamicConfig().get("upstream-host").toString();
+        int port = (int) config.getDynamicConfig().get("upstream-port");
+        String path = "/test/fhir-server/api/v4";
+
+        URL serverUrl = new URL(scheme, host, port, path);
+
+        FhirContext fhirContextNew = FhirContext.forR4();
+
+        fhirContextNew.getRestfulClientFactory().setSocketTimeout(200 * 1000);
+        BearerTokenAuthInterceptor authInterceptor = new BearerTokenAuthInterceptor(token);
+
+        IGenericClient client = fhirContextNew.getRestfulClientFactory().newGenericClient(serverUrl.toString());
+        client.registerInterceptor(authInterceptor);
+
         return client;
     }
 
@@ -536,5 +578,74 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
         } else {
             unhandled(msg);
         }
+    }
+
+    public String generateToken(String clientId, String clientSecret, String tokenUri, String scope) throws Exception {
+
+        File f = new File("src/main/resources/OAuth-token.dat");
+        OAuthToken token = new OAuthToken();
+
+        if (f.exists() && !f.isDirectory()) {
+            ObjectInputStream objectInputStream = new ObjectInputStream(new FileInputStream("src/main/resources/OAuth-token.dat"));
+            token = (OAuthToken) objectInputStream.readObject();
+            objectInputStream.close();
+
+            if (!isTokenExpired(token)) {
+                System.out.println("Token will expire at " + token.getLastTimeGenerated().plusSeconds(Integer.parseInt(token.getExpiresIn())));
+                return token.getAccessToken();
+            }
+        }
+        String query = String.format("grant_type=%s&client_id=%s&client_secret=%s&scope=%s",
+                "client_credentials", URLEncoder.encode(clientId),
+                URLEncoder.encode(clientSecret), URLEncoder.encode(scope));
+
+        URL url = new URL(tokenUri);
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setRequestMethod("POST");
+        connection.setDoOutput(true);
+        connection.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+        OutputStream os = connection.getOutputStream();
+        os.write(query.getBytes(StandardCharsets.UTF_8));
+        os.flush();
+        os.close();
+
+        BufferedReader br = new BufferedReader(new InputStreamReader(connection.getInputStream()));
+        String response = "";
+        String line = null;
+        while ((line = br.readLine()) != null) {
+            response += line;
+        }
+        br.close();
+
+        try (FileOutputStream fos = new FileOutputStream("src/main/resources/OAuth-token.dat");
+             ObjectOutputStream oos = new ObjectOutputStream(fos)) {
+
+            JsonParser parser = new JsonParser();
+            JsonObject jsonNode = (JsonObject) parser.parse(response);
+            token.setAccessToken(jsonNode.get("access_token").toString());
+            token.setExpiresIn(jsonNode.get("expires_in").toString());
+            token.setTokenType(jsonNode.get("token_type").toString());
+            token.setScope(jsonNode.get("scope").toString());
+            token.setLastTimeGenerated(LocalDateTime.now());
+
+            oos.writeObject(token);
+            System.out.println("Successfully wrote JSON object to file.");
+
+        } catch (IOException ex) {
+            ex.printStackTrace();
+            System.out.println("An error occurred while writing JSON object to file: " + ex.getMessage());
+        }
+
+        System.out.println("Token will expire at " + token.getLastTimeGenerated().plusSeconds(Integer.parseInt(token.getExpiresIn())));
+
+        return token.getAccessToken();
+    }
+
+    public boolean isTokenExpired(OAuthToken token) {
+        LocalDateTime tokenExpirationTime = token.getLastTimeGenerated().plusSeconds(Integer.parseInt(token.getExpiresIn()));
+        if (LocalDateTime.now().plusDays(100).isAfter(tokenExpirationTime)) {
+            return true;
+        }
+        return false;
     }
 }
