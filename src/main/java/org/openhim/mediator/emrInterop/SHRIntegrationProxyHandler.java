@@ -53,6 +53,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -129,7 +130,7 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
                 (String) config.getDynamicConfig().get("upstream-scheme"),
                 (String) config.getDynamicConfig().get("upstream-host"),
                 ((Double) config.getDynamicConfig().get("upstream-port")).intValue(),
-                "/fhir/Patient",
+                "/test/fhir-server/api/v4/Patient",
                 body,
                 headers,
                 copyParams(request.getParams())
@@ -167,7 +168,8 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
 
     private void forwardRequest(Contents contents) {
         Map<String, String> headers = copyHeaders(request.getHeaders());
-        headers.put("Content-Type", contents.contentType);
+        headers.put("Content-Type", "application/json");
+        headers.put("Authorization","Basic ZmhpcnVzZXI6Y2hhbmdlLXBhc3N3b3Jk");
         forwardRequest(headers, contents.content);
     }
 
@@ -190,7 +192,7 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
                 ("XML".equalsIgnoreCase(upstreamFormat) && clientContentType.contains("xml"));
     }
 
-    private void processRequestWithContentsTwo() throws Exception {
+    private void processRequestWithContentsTwo() {
         String contentType = request.getHeaders().get("Content-Type");
         String body = request.getBody();
 
@@ -333,7 +335,6 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
                 bundleResource = client.search().forResource("Location").where(Location.IDENTIFIER.exactly().code(identifier))
                         .returnBundle(Bundle.class).execute();
             }
-            ;
 
             if (bundleResource.hasEntry()) {
                 return updateResourceReference(bundleResource, reference);
