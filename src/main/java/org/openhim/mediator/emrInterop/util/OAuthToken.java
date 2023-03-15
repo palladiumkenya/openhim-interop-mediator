@@ -1,7 +1,6 @@
 package org.openhim.mediator.emrInterop.util;
 
 import java.io.Serializable;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 public class OAuthToken implements Serializable {

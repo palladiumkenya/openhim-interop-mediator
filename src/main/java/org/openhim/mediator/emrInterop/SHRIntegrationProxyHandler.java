@@ -14,7 +14,9 @@ import akka.event.LoggingAdapter;
 import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.parser.DataFormatException;
 import ca.uhn.fhir.parser.IParser;
+import ca.uhn.fhir.rest.client.api.IClientInterceptor;
 import ca.uhn.fhir.rest.client.api.IGenericClient;
+import ca.uhn.fhir.rest.client.interceptor.BasicAuthInterceptor;
 import ca.uhn.fhir.rest.client.interceptor.BearerTokenAuthInterceptor;
 import ca.uhn.fhir.util.OperationOutcomeUtil;
 import ca.uhn.fhir.validation.FhirValidator;
@@ -36,6 +38,8 @@ import org.apache.http.impl.client.HttpClients;
 import org.hl7.fhir.instance.model.api.IAnyResource;
 import org.hl7.fhir.instance.model.api.IBaseOperationOutcome;
 import org.hl7.fhir.instance.model.api.IBaseResource;
+import org.hl7.fhir.r4.model.AllergyIntolerance;
+import org.hl7.fhir.r4.model.Appointment;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.Condition;
 import org.hl7.fhir.r4.model.Encounter;
@@ -43,8 +47,10 @@ import org.hl7.fhir.r4.model.Location;
 import org.hl7.fhir.r4.model.Observation;
 import org.hl7.fhir.r4.model.Patient;
 import org.hl7.fhir.r4.model.Practitioner;
+import org.hl7.fhir.r4.model.Provenance;
 import org.hl7.fhir.r4.model.Reference;
 import org.hl7.fhir.r4.model.Resource;
+import org.openhim.mediator.emrInterop.util.BasicAuthInterceptorExtended;
 import org.openhim.mediator.emrInterop.util.MediatorConstants;
 import org.openhim.mediator.emrInterop.util.OAuthToken;
 import org.openhim.mediator.engine.MediatorConfig;
@@ -62,16 +68,13 @@ import java.io.InputStreamReader;
 import java.io.ObjectInputStream;
 import java.io.ObjectOutputStream;
 import java.io.OutputStream;
-import java.io.Serializable;
 import java.lang.reflect.InvocationTargetException;
 import java.net.HttpURLConnection;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -228,11 +231,11 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
         IBaseResource resource = parser.parseResource(body);
         if (resource.getClass().getSimpleName().equals("Bundle")) {
             Bundle bundle = (Bundle) resource;
-
+            bundle.setType(Bundle.BundleType.BATCH);
             if (bundle.hasEntry()) {
 
-                System.out.println("TOKEN" + generateToken(MediatorConstants.CLIENT_ID, MediatorConstants.CLIENT_SECRET,
-                        MediatorConstants.TOKEN_URL, MediatorConstants.SCOPE));
+                /*System.out.println("TOKEN" + generateToken(MediatorConstants.CLIENT_ID, MediatorConstants.CLIENT_SECRET,
+                      MediatorConstants.TOKEN_URL, MediatorConstants.SCOPE));*/
 
                 Reference subjectReference = null;
                 Reference practitionerReference = null;
@@ -253,16 +256,20 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
                             if (subjectReference == null) {
                                 subjectReference = getResourceReference(encounter.getSubject(), "Patient");
                             }
-                            if (practitionerReference == null) {
-                                practitionerReference = getResourceReference(encounter.getParticipantFirstRep().getIndividual(), "Practitioner");
+                            if (!encounter.getParticipantFirstRep().isEmpty()) {
+                                if (practitionerReference == null) {
+                                    practitionerReference = getResourceReference(encounter.getParticipantFirstRep().getIndividual(), "Practitioner");
+                                }
+                                encounter.getParticipantFirstRep().setIndividual(practitionerReference);
                             }
-                            if (facilityReference == null) {
-                                facilityReference = getResourceReference(encounter.getLocationFirstRep().getLocation(), "Location");
+                            if (!encounter.getLocationFirstRep().isEmpty()) {
+                                if (facilityReference == null) {
+                                    facilityReference = getResourceReference(encounter.getLocationFirstRep().getLocation(), "Location");
+                                }
+                                encounter.getLocationFirstRep().setLocation(facilityReference);
                             }
                             encounter.setSubject(subjectReference);
-                            encounter.setParticipant(new ArrayList<>());
-                            encounter.getParticipantFirstRep().setIndividual(practitionerReference);
-                            encounter.getLocationFirstRep().setLocation(facilityReference);
+//                            encounter.setParticipant(new ArrayList<>());
                             entry.setResource(encounter);
                             break;
                         case "Condition":
@@ -276,6 +283,28 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
                             condition.setSubject(subjectReference);
                             condition.setRecorder(practitionerReference);
                             entry.setResource(condition);
+                            break;
+                        case "AllergyIntolerance":
+                            AllergyIntolerance allergyIntolerance = (AllergyIntolerance) entry.getResource();
+                            if (subjectReference == null) {
+                                subjectReference = getResourceReference(allergyIntolerance.getPatient(), "Patient");
+                            }
+                            if (practitionerReference == null) {
+                                practitionerReference = getResourceReference(allergyIntolerance.getRecorder(), "Practitioner");
+                            }
+                            allergyIntolerance.setPatient(subjectReference);
+                            allergyIntolerance.setRecorder(practitionerReference);
+                            entry.setResource(allergyIntolerance);
+                            break;
+                        case "Appointment":
+                            Appointment appointment = (Appointment) entry.getResource();
+                            if (!appointment.getParticipantFirstRep().isEmpty()) {
+                                if (subjectReference == null) {
+                                    subjectReference = getResourceReference(appointment.getParticipantFirstRep().getActor(), "Patient");
+                                }
+                                appointment.getParticipantFirstRep().setActor((subjectReference));
+                            }
+                            entry.setResource(appointment);
                             break;
                         default:
                             log.error("default logging");
@@ -338,11 +367,14 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
     }
 
     public Reference getResourceReference(Reference reference, String resourceType) {
+        if (reference == null) {
+            return null;
+        }
         try {
             String identifier = reference.getIdentifier().getValue();
-            System.out.println("Resolve resource" + resourceType + "with identifier" + identifier);
+            System.out.println("Resolve resource " + resourceType + "with identifier" + identifier);
 
-            IGenericClient client = getFhirClient();
+            IGenericClient client = getSourceClient();
 
             Bundle bundleResource = null;
 
@@ -364,11 +396,10 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
             } else {
                 System.out.println("Resource" + resourceType + "with identifier" + identifier + " was not found");
             }
-            return null;
         } catch (Exception e) {
             log.error(String.format("Failed fetching FHIR resource %s", e));
-            return null;
         }
+        return null;
     }
 
     private Reference updateResourceReference(@Nonnull IAnyResource resource, Reference reference) {
@@ -384,14 +415,15 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
         return reference;
     }
 
+    public IGenericClient getSourceClient() {
+        String fhirUrl = "{serverUlr}";
 
-    private IGenericClient getFhirClient() {
-        FhirContext fhirContextNew = FhirContext.forR4();
-        String serverUrl = "http://localhost:8098/fhir/";
+        IClientInterceptor authInterceptor = new BasicAuthInterceptorExtended("{username}:{password}");
+        fhirContext.getRestfulClientFactory().setSocketTimeout(200 * 1000);
 
-        fhirContextNew.getRestfulClientFactory().setSocketTimeout(200 * 1000);
+        IGenericClient client = fhirContext.getRestfulClientFactory().newGenericClient(fhirUrl);
+        client.registerInterceptor(authInterceptor);
 
-        IGenericClient client = fhirContextNew.getRestfulClientFactory().newGenericClient(serverUrl);
         return client;
     }
 
@@ -418,7 +450,7 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
 
     public Resource fetchFhirResource(String resourceType, String resourceId) {
         try {
-            IGenericClient client = getFhirClient();
+            IGenericClient client = getSourceClient();
             IBaseResource resource = client.read().resource(resourceType).withId(resourceId).execute();
             return (Resource) resource;
         } catch (Exception e) {
@@ -550,7 +582,6 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
             }
         }
     }
-
 
     @Override
     public void onReceive(Object msg) throws Exception {
