@@ -42,6 +42,7 @@ import org.hl7.fhir.r4.model.AllergyIntolerance;
 import org.hl7.fhir.r4.model.Appointment;
 import org.hl7.fhir.r4.model.Bundle;
 import org.hl7.fhir.r4.model.Condition;
+import org.hl7.fhir.r4.model.DiagnosticReport;
 import org.hl7.fhir.r4.model.Encounter;
 import org.hl7.fhir.r4.model.Location;
 import org.hl7.fhir.r4.model.Observation;
@@ -306,6 +307,27 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
                             }
                             entry.setResource(appointment);
                             break;
+                        case "DiagnosticReport":
+                            DiagnosticReport diagnosticReport = (DiagnosticReport) entry.getResource();
+                            if (subjectReference == null) {
+                                subjectReference = getResourceReference(diagnosticReport.getSubject(), "Patient");
+                            }
+                            diagnosticReport.setSubject(subjectReference);
+                            if (!diagnosticReport.getResultsInterpreterFirstRep().isEmpty()) {
+                                if (practitionerReference == null) {
+                                    practitionerReference = getResourceReference(diagnosticReport.getResultsInterpreterFirstRep(), "Practitioner");
+                                }
+                                diagnosticReport.setResultsInterpreter(new ArrayList<>());
+                                diagnosticReport.addResultsInterpreter(practitionerReference);
+                            }
+                            List<Reference> results = diagnosticReport.getResult();
+                            List<Reference> updatedResults = new ArrayList<>();
+                            results.forEach(ob -> {
+                                updatedResults.add(getResourceReference(ob, "Observation"));
+                            });
+                            diagnosticReport.setResult(updatedResults);
+                            entry.setResource(diagnosticReport);
+                            break;
                         default:
                             log.error("default logging");
                     }
@@ -390,11 +412,15 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
                 bundleResource = client.search().forResource("Location").where(Location.IDENTIFIER.exactly().code(identifier))
                         .returnBundle(Bundle.class).execute();
             }
+            if (resourceType.equals("Observation")) {
+                bundleResource = client.search().forResource("Observation").where(Observation.IDENTIFIER.exactly().code(identifier))
+                        .returnBundle(Bundle.class).execute();
+            }
 
             if (bundleResource.getEntry().size() > 0) {
-                return updateResourceReference(bundleResource, reference);
+                return updateResourceReference(bundleResource.getEntry().get(0).getResource(), reference);
             } else {
-                System.out.println("Resource" + resourceType + "with identifier" + identifier + " was not found");
+                System.out.println("Resource" + resourceType + "with identifier" + identifier + " WAS NOT FOUND");
             }
         } catch (Exception e) {
             log.error(String.format("Failed fetching FHIR resource %s", e));
@@ -403,14 +429,19 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
     }
 
     private Reference updateResourceReference(@Nonnull IAnyResource resource, Reference reference) {
-        if (resource.getClass().getSimpleName().equals("Patient")) {
+        String bundleType = resource.getClass().getSimpleName();
+
+        if (bundleType.equals("Patient")) {
             reference.setReference("/Patient/" + getResourceUuid(resource.getId()));
         }
-        if (resource.getClass().getSimpleName().equals("Practitioner")) {
+        if (bundleType.equals("Practitioner")) {
             reference.setReference("/Practitioner/" + getResourceUuid(resource.getId()));
         }
-        if (resource.getClass().getSimpleName().equals("Location")) {
+        if (bundleType.equals("Location")) {
             reference.setReference("/Location/" + getResourceUuid(resource.getId()));
+        }
+        if (bundleType.equals("Observation")) {
+            reference.setReference("/Observation/" + getResourceUuid(resource.getId())).setIdentifier(null);
         }
         return reference;
     }
