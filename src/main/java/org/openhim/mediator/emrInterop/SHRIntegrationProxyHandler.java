@@ -51,6 +51,7 @@ import org.hl7.fhir.r4.model.Practitioner;
 import org.hl7.fhir.r4.model.Provenance;
 import org.hl7.fhir.r4.model.Reference;
 import org.hl7.fhir.r4.model.Resource;
+import org.hl7.fhir.r4.model.ServiceRequest;
 import org.openhim.mediator.emrInterop.util.BasicAuthInterceptorExtended;
 import org.openhim.mediator.emrInterop.util.MediatorConstants;
 import org.openhim.mediator.emrInterop.util.OAuthToken;
@@ -232,7 +233,7 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
         IBaseResource resource = parser.parseResource(body);
         if (resource.getClass().getSimpleName().equals("Bundle")) {
             Bundle bundle = (Bundle) resource;
-            bundle.setType(Bundle.BundleType.BATCH);
+            bundle.setType(Bundle.BundleType.TRANSACTION);
             if (bundle.hasEntry()) {
 
                 /*System.out.println("TOKEN" + generateToken(MediatorConstants.CLIENT_ID, MediatorConstants.CLIENT_SECRET,
@@ -297,6 +298,18 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
                             allergyIntolerance.setRecorder(practitionerReference);
                             entry.setResource(allergyIntolerance);
                             break;
+                        case "ServiceRequest":
+                            ServiceRequest serviceRequest = (ServiceRequest) entry.getResource();
+                            if (subjectReference == null) {
+                                subjectReference = getResourceReference(serviceRequest.getSubject(), "Patient");
+                            }
+                            if (practitionerReference == null) {
+                                practitionerReference = getResourceReference(serviceRequest.getRequester(), "Practitioner");
+                            }
+                            serviceRequest.setSubject(subjectReference);
+                            serviceRequest.setRequester(practitionerReference);
+                            entry.setResource(serviceRequest);
+                            break;
                         case "Appointment":
                             Appointment appointment = (Appointment) entry.getResource();
                             if (!appointment.getParticipantFirstRep().isEmpty()) {
@@ -304,6 +317,12 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
                                     subjectReference = getResourceReference(appointment.getParticipantFirstRep().getActor(), "Patient");
                                 }
                                 appointment.getParticipantFirstRep().setActor((subjectReference));
+                            }
+                            if (!appointment.getBasedOn().isEmpty()) {
+                                Reference appointmentRequest = getResourceReference(appointment.getBasedOnFirstRep(), "ServiceRequest");
+                                appointmentRequest.setType("ServiceRequest");
+                                appointment.setBasedOn(new ArrayList<>());
+                                appointment.addBasedOn(appointmentRequest);
                             }
                             entry.setResource(appointment);
                             break;
@@ -334,22 +353,22 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
 
                 }
 
+                System.out.println(parser.setPrettyPrint(true).encodeResourceToString(bundle));
+
+                Contents contents = new Contents(contentType, parser.encodeResourceToString(bundle));
+
+                if ((Boolean) config.getDynamicConfig().get("validation-enabled")) {
+                    FhirValidationResult validationResult = validateFhirRequest(contents);
+
+                    if (!validationResult.passed) {
+                        sendBadRequest(validationResult.operationOutcome);
+                    }
+                }
+
+                forwardRequest(contents);
             }
 
         }
-
-        Contents contents = new Contents(contentType, body);
-
-        if ((Boolean) config.getDynamicConfig().get("validation-enabled")) {
-            FhirValidationResult validationResult = validateFhirRequest(contents);
-
-            if (!validationResult.passed) {
-                sendBadRequest(validationResult.operationOutcome);
-            }
-        }
-
-
-        forwardRequest(contents);
     }
 
     public void getPatientUpiNumber(String patientUuid) throws Exception {
@@ -416,6 +435,10 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
                 bundleResource = client.search().forResource("Observation").where(Observation.IDENTIFIER.exactly().code(identifier))
                         .returnBundle(Bundle.class).execute();
             }
+            if (resourceType.equals("ServiceRequest")) {
+                bundleResource = client.search().forResource("ServiceRequest").where(ServiceRequest.IDENTIFIER.exactly().code(identifier))
+                        .returnBundle(Bundle.class).execute();
+            }
 
             if (bundleResource.getEntry().size() > 0) {
                 return updateResourceReference(bundleResource.getEntry().get(0).getResource(), reference);
@@ -442,6 +465,9 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
         }
         if (bundleType.equals("Observation")) {
             reference.setReference("/Observation/" + getResourceUuid(resource.getId())).setIdentifier(null);
+        }
+        if (bundleType.equals("ServiceRequest")) {
+            reference.setReference("/ServiceRequest/" + getResourceUuid(resource.getId())).setIdentifier(null);
         }
         return reference;
     }
