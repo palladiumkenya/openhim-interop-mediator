@@ -473,10 +473,10 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
     }
 
     public IGenericClient getSourceClient() {
-        String fhirUrl = "{serverUlr}";
+        String fhirUrl = "https://interoperabilitylab.uonbi.ac.ke/test/fhir-server/api/v4/";
 
-        IClientInterceptor authInterceptor = new BasicAuthInterceptorExtended("{username}:{password}");
-        fhirContext.getRestfulClientFactory().setSocketTimeout(200 * 1000);
+        IClientInterceptor authInterceptor = new BasicAuthInterceptorExtended("fhiruser:change-password");
+        fhirContext.getRestfulClientFactory().setSocketTimeout(20000 * 1000);
 
         IGenericClient client = fhirContext.getRestfulClientFactory().newGenericClient(fhirUrl);
         client.registerInterceptor(authInterceptor);

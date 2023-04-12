@@ -52,7 +52,7 @@ public class MediatorMain {
         config.setName(config.getProperty("mediator.name"));
         config.setServerHost(config.getProperty("mediator.host"));
         config.setServerPort( Integer.parseInt(config.getProperty("mediator.port")) );
-        config.setRootTimeout(Integer.parseInt(config.getProperty("mediator.timeout")));
+        config.setRootTimeout(600000000);
 
         config.setCoreHost(config.getProperty("core.host"));
         config.setCoreAPIUsername(config.getProperty("core.api.user"));
