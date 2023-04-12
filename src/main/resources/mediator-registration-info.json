@@ -37,6 +37,11 @@
       "values": ["http", "https"]
     },
     {
+      "param": "participating-systems",
+      "displayName": "Participating Systems",
+      "type": "string"
+    },
+    {
       "param": "upstream-host",
       "displayName": "Upstream Server Host",
       "type": "string"
@@ -65,13 +70,5 @@
       "description": "If enabled, fhir documents will be validated before being sent upstream",
       "type": "bool"
     }
-  ],
-  "config": {
-    "upstream-scheme": "http",
-    "upstream-host": "localhost",
-    "upstream-port": 8098,
-    "upstream-format": "JSON",
-    "fhir-context": "fhirR4",
-    "validation-enabled": false
-  }
+  ]
 }

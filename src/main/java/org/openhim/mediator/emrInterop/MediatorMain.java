@@ -9,11 +9,11 @@ package org.openhim.mediator.emrInterop;
 import akka.actor.ActorSystem;
 import akka.event.Logging;
 import akka.event.LoggingAdapter;
-import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.IOUtils;
 import org.openhim.mediator.engine.*;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Map;
@@ -23,15 +23,8 @@ public class MediatorMain {
 
     private static RoutingTable buildRoutingTable() throws RoutingTable.RouteAlreadyMappedException {
         RoutingTable routingTable = new RoutingTable();
-        routingTable.addRegexRoute(".*", SHRIntegrationProxyHandler.class);
+        routingTable.addRegexRoute("/MessageProxyHandler", HL7MessageProxyHandler.class);
         return routingTable;
-    }
-
-    //Sharable among other actors
-    private static StartupActorsConfig buildStartupActorsConfig() {
-        StartupActorsConfig startupActors = new StartupActorsConfig();
-        startupActors.addActor("fhir-context", FhirContextActor.class);
-        return startupActors;
     }
 
     private static MediatorConfig loadConfig(String configPath) throws IOException, RoutingTable.RouteAlreadyMappedException {
@@ -40,7 +33,7 @@ public class MediatorMain {
         if (configPath!=null) {
             Properties props = new Properties();
             File conf = new File(configPath);
-            InputStream in = FileUtils.openInputStream(conf);
+            InputStream in = new FileInputStream(conf);
             props.load(in);
             IOUtils.closeQuietly(in);
 
@@ -62,7 +55,7 @@ public class MediatorMain {
         }
 
         config.setRoutingTable(buildRoutingTable());
-        config.setStartupActors(buildStartupActorsConfig());
+//        config.setStartupActors(buildStartupActorsConfig());
 
         InputStream regInfo = MediatorMain.class.getClassLoader().getResourceAsStream("mediator-registration-info.json");
         RegistrationConfig regConfig = new RegistrationConfig(regInfo);

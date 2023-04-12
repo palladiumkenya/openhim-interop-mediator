@@ -11,32 +11,26 @@ import akka.actor.ActorSelection;
 import akka.actor.UntypedActor;
 import akka.event.Logging;
 import akka.event.LoggingAdapter;
-import ca.uhn.fhir.context.FhirContext;
 import ca.uhn.fhir.parser.DataFormatException;
-import ca.uhn.fhir.parser.IParser;
-import ca.uhn.fhir.util.OperationOutcomeUtil;
-import ca.uhn.fhir.validation.FhirValidator;
-import ca.uhn.fhir.validation.ValidationResult;
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import org.apache.commons.lang3.tuple.Pair;
-import org.apache.http.HttpStatus;
-import org.hl7.fhir.instance.model.api.IBaseOperationOutcome;
-import org.hl7.fhir.instance.model.api.IBaseResource;
 import org.openhim.mediator.engine.MediatorConfig;
 import org.openhim.mediator.engine.messages.FinishRequest;
 import org.openhim.mediator.engine.messages.MediatorHTTPRequest;
 import org.openhim.mediator.engine.messages.MediatorHTTPResponse;
 
+import java.net.URL;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
 
-public class SHRIntegrationProxyHandler extends UntypedActor {
-    private static class FhirValidationResult {
-        boolean passed;
-        IBaseOperationOutcome operationOutcome;
-    }
+public class HL7MessageProxyHandler extends UntypedActor {
 
     private static class Contents {
         String contentType;
@@ -51,8 +45,6 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
     LoggingAdapter log = Logging.getLogger(getContext().system(), this);
 
     private final MediatorConfig config;
-
-    private FhirContext fhirContext;
     private ActorRef requestHandler;
     private ActorRef respondTo;
     private MediatorHTTPRequest request;
@@ -61,58 +53,71 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
     private String upstreamFormat;
 
 
-    public SHRIntegrationProxyHandler(MediatorConfig config) {
+    public HL7MessageProxyHandler(MediatorConfig config) {
         this.config = config;
     }
-
-
-    private void loadFhirContext() {
-        ActorSelection actor = getContext().actorSelection(config.userPathFor("fhir-context"));
-        actor.tell(new FhirContextActor.FhirContextRequest(requestHandler, getSelf()), getSelf());
-    }
-
-
-    private FhirValidationResult validateFhirRequest(Contents contents) {
-        FhirValidationResult result = new FhirValidationResult();
-        FhirValidator validator = fhirContext.newValidator();
-
-        IParser parser = newParser(contents.contentType);
-        IBaseResource resource = parser.parseResource(contents.content);
-        ValidationResult vr = validator.validateWithResult(resource);
-
-        if (vr.isSuccessful()) {
-            result.passed = true;
-        } else {
-            result.passed = false;
-            result.operationOutcome = vr.toOperationOutcome();
-        }
-
-        return result;
-    }
-
 
     private void forwardRequest(Map<String, String> headers, String body) {
         String upstreamAccept = determineTargetContentType(determineClientContentType());
         headers.put("Accept", upstreamAccept);
 
-        MediatorHTTPRequest newRequest = new MediatorHTTPRequest(
-                requestHandler,
-                getSelf(),
-                "FHIR Upstream",
-                request.getMethod(),
-                (String) config.getDynamicConfig().get("upstream-scheme"),
-                (String) config.getDynamicConfig().get("upstream-host"),
-                ((Double) config.getDynamicConfig().get("upstream-port")).intValue(),
-                "/fhir/Patient",
-                body,
-                headers,
-                copyParams(request.getParams())
-        );
+        String subscribers = (String) config.getDynamicConfig().get("participating-systems");
+        List<String> list = Arrays.asList(subscribers.split(","));
+        List<MessageSubscriber> messageSubscribers = new ArrayList<>();
+        list.forEach(e -> {
+            String[] value = e.split("::");
+            MessageSubscriber subscriber = new MessageSubscriber(value[0], value[1]);
+            messageSubscribers.add(subscriber);
+        });
 
-        log.info("[" + openhimTrxID + "] Forwarding to " + newRequest.getHost() + ":" + newRequest.getPort() + newRequest.getPath());
+        ObjectMapper objectMapper = new ObjectMapper();
+        JsonNode jsonNode = null;
+        try {
+            jsonNode = objectMapper.readTree(body);
+        } catch (JsonProcessingException e) {
+            e.printStackTrace();
+        }
+        ObjectNode patientObj = (ObjectNode) jsonNode.get("message_header");
 
-        ActorSelection httpConnector = getContext().actorSelection(config.userPathFor("http-connector"));
-        httpConnector.tell(newRequest, getSelf());
+        String messageType = patientObj.get("message_type").asText();
+
+        List<MessageSubscriber> finalList = new ArrayList<>();
+
+        messageSubscribers.forEach(s -> {
+            if (s.getMessageType().equals(messageType)) {
+                finalList.add(s);
+            }
+        });
+
+        System.out.println("vasgxhasvc " + finalList.size());
+
+        finalList.forEach(e -> {
+
+            try {
+                URL url = new URL(e.getServerUrl());
+                MediatorHTTPRequest newRequest = new MediatorHTTPRequest(
+                        requestHandler,
+                        getSelf(),
+                        "Upstream Server",
+                        request.getMethod(),
+                        url.getProtocol(),
+                        url.getHost(),
+                        url.getPort(),
+                        url.getPath(),
+                        body,
+                        headers,
+                        copyParams(request.getParams())
+                );
+
+                log.info("[" + openhimTrxID + "] Forwarding to " + newRequest.getHost() + ":" + newRequest.getPort() + newRequest.getPath());
+
+                ActorSelection httpConnector = getContext().actorSelection(config.userPathFor("http-connector"));
+                httpConnector.tell(newRequest, getSelf());
+            } catch (Exception ex) {
+                ex.printStackTrace();
+            }
+        });
+
     }
 
     private Map<String, String> copyHeaders(Map<String, String> headers) {
@@ -139,15 +144,19 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
         return copy;
     }
 
-    private void forwardRequest(Contents contents) {
+    private void processRequestWithContents() {
+        String contentType = request.getHeaders().get("Content-Type");
+        String body = request.getBody();
+        Contents contents = new Contents(contentType, body);
+        if (contents == null) {
+            log.info("HL7 MESSAGE NOT PROVIDED");
+            return;
+        }
+
+
         Map<String, String> headers = copyHeaders(request.getHeaders());
         headers.put("Content-Type", contents.contentType);
         forwardRequest(headers, contents.content);
-    }
-
-    private void forwardRequest() {
-        Map<String, String> headers = copyHeaders(request.getHeaders());
-        forwardRequest(headers, null);
     }
 
     private String determineTargetContentType(String fromContentType) {
@@ -164,62 +173,15 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
                 ("XML".equalsIgnoreCase(upstreamFormat) && clientContentType.contains("xml"));
     }
 
-    private void processRequestWithContents() {
-        String contentType = request.getHeaders().get("Content-Type");
-        String body = request.getBody();
-        Contents contents = new Contents(contentType, body);
-
-        if ((Boolean) config.getDynamicConfig().get("validation-enabled")) {
-            FhirValidationResult validationResult = validateFhirRequest(contents);
-
-            if (!validationResult.passed) {
-                sendBadRequest(validationResult.operationOutcome);
-                return;
-            }
-        }
-
-//        contents = convertBodyForUpstream(contents);
-        if (contents == null) {
-            return;
-        }
-
-        forwardRequest(contents);
-    }
-
     private void processClientRequest() {
         try {
             if (request.getMethod().equalsIgnoreCase("POST") || request.getMethod().equalsIgnoreCase("PUT")) {
                 processRequestWithContents();
             } else {
-                forwardRequest();
+                log.info("REQUEST TYPE NOT SUPPORTED");
             }
         } catch (DataFormatException ex) {
-            sendBadRequest(throwableToOperationOutcome(ex));
-        }
-    }
-
-    private IBaseOperationOutcome throwableToOperationOutcome(Throwable ex) {
-        IBaseOperationOutcome outcome = OperationOutcomeUtil.newInstance(fhirContext);
-        OperationOutcomeUtil.addIssue(fhirContext, outcome, "error", ex.getMessage(), null, null);
-        return outcome;
-    }
-
-    private void sendBadRequest(IBaseOperationOutcome outcome) {
-        String responseContentType = determineClientContentType();
-
-        IParser parser = newParser(responseContentType);
-        String body = parser.encodeResourceToString(outcome);
-
-        FinishRequest badRequest = new FinishRequest(body, responseContentType, HttpStatus.SC_BAD_REQUEST);
-        requestHandler.tell(badRequest, getSelf());
-    }
-
-
-    private IParser newParser(String contentType) {
-        if (contentType.contains("json")) {
-            return fhirContext.newJsonParser();
-        } else {
-            return fhirContext.newXmlParser();
+            log.info("AN ERROR OCCURRED "+ex.getMessage());
         }
     }
 
@@ -270,7 +232,7 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
         respondTo.tell(fr, getSelf());
     }
 
-    private Contents convertResponseContents(String clientAccept, Contents responseContents) {
+    /*private Contents convertResponseContents(String clientAccept, Contents responseContents) {
         log.info("[" + openhimTrxID + "] Converting response body to " + clientAccept);
 
         IParser inParser = newParser(responseContents.contentType);
@@ -279,7 +241,7 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
         IParser outParser = newParser(clientAccept);
         String converted = outParser.setPrettyPrint(true).encodeResourceToString(resource);
         return new Contents(clientAccept, converted);
-    }
+    }*/
 
     private void processUpstreamResponse() {
         log.info("[" + openhimTrxID + "] Processing upstream response and responding to client");
@@ -293,7 +255,7 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
             if (isUpstreamAndClientFormatsEqual(clientAccept)) {
                 respondWithContents(contents);
             } else {
-                respondWithContents(convertResponseContents(clientAccept, contents));
+                //respondWithContents(convertResponseContents(clientAccept, contents));
             }
         }
     }
@@ -307,10 +269,6 @@ public class SHRIntegrationProxyHandler extends UntypedActor {
             respondTo = request.getRespondTo();
             openhimTrxID = request.getHeaders().get("X-OpenHIM-TransactionID");
             upstreamFormat = (String) config.getDynamicConfig().get("upstream-format");
-            loadFhirContext();
-
-        } else if (msg instanceof FhirContextActor.FhirContextResponse) { //response from FHIR context handler
-            fhirContext = ((FhirContextActor.FhirContextResponse) msg).getResponseObject();
             processClientRequest();
 
         } else if (msg instanceof MediatorHTTPResponse) { //response from upstream server
