@@ -4,7 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-package org.openhim.mediator.emrInterop;
+package org.openhim.mediator.hl7messageHandler;
 
 public class Constants {
     public static String FHIR_MIME_JSON = "application/json+fhir";

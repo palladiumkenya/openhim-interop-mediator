@@ -4,14 +4,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
-package org.openhim.mediator.emrInterop;
+package org.openhim.mediator.hl7messageHandler;
 
 import akka.actor.ActorRef;
 import akka.actor.ActorSelection;
 import akka.actor.UntypedActor;
 import akka.event.Logging;
 import akka.event.LoggingAdapter;
-import ca.uhn.fhir.parser.DataFormatException;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -90,6 +89,7 @@ public class HL7MessageProxyHandler extends UntypedActor {
         });
 
         System.out.println("vasgxhasvc " + finalList.size());
+        if (finalList.isEmpty()) return;
 
         finalList.forEach(e -> {
 
@@ -174,15 +174,11 @@ public class HL7MessageProxyHandler extends UntypedActor {
     }
 
     private void processClientRequest() {
-        try {
             if (request.getMethod().equalsIgnoreCase("POST") || request.getMethod().equalsIgnoreCase("PUT")) {
                 processRequestWithContents();
             } else {
                 log.info("REQUEST TYPE NOT SUPPORTED");
             }
-        } catch (DataFormatException ex) {
-            log.info("AN ERROR OCCURRED "+ex.getMessage());
-        }
     }
 
     private String determineClientContentType() {
@@ -232,17 +228,6 @@ public class HL7MessageProxyHandler extends UntypedActor {
         respondTo.tell(fr, getSelf());
     }
 
-    /*private Contents convertResponseContents(String clientAccept, Contents responseContents) {
-        log.info("[" + openhimTrxID + "] Converting response body to " + clientAccept);
-
-        IParser inParser = newParser(responseContents.contentType);
-        IBaseResource resource = inParser.parseResource(responseContents.content);
-
-        IParser outParser = newParser(clientAccept);
-        String converted = outParser.setPrettyPrint(true).encodeResourceToString(resource);
-        return new Contents(clientAccept, converted);
-    }*/
-
     private void processUpstreamResponse() {
         log.info("[" + openhimTrxID + "] Processing upstream response and responding to client");
         Contents contents = getResponseBodyAsContents();
@@ -264,6 +249,7 @@ public class HL7MessageProxyHandler extends UntypedActor {
     @Override
     public void onReceive(Object msg) throws Exception {
         if (msg instanceof MediatorHTTPRequest) { //inbound request
+            System.out.println("CALLED");
             request = (MediatorHTTPRequest) msg;
             requestHandler = request.getRequestHandler();
             respondTo = request.getRespondTo();

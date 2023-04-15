@@ -1,73 +1,39 @@
 {
-  "urn": "urn:mediator:emr-interop",
-  "version": "1.0.2",
-  "name": "OpenHIM Mediator EMR Interop",
-  "description": "Provides fhir-to-fhir adapter and validation services",
-  "defaultChannelConfig": [
-    {
-      "name": "FHIR Proxy",
-      "urlPattern": "^/fhir.*$",
-      "routes": [
-        {
-          "name": "OpenHIM Mediator EMR Interop Proxy Route",
-          "primary": true,
-          "host": "localhost",
-          "port": "8300",
-          "type": "http",
-          "forwardAuthHeader": false
-        }
-      ],
-      "allow": ["fhir"],
-      "type": "http"
-    }
-  ],
+  "urn": "urn:mediator:openhim-interoperability-middleware",
+  "version": "1.0.0",
+  "name": "OpenHIM Interoperability Middleware",
+  "description": "Provides a platform for participating systems to specify subscription messages",
   "endpoints": [
     {
-      "name": "OpenHIM Mediator  EMR Interop Proxy Route",
-      "host": "localhost",
+      "name": "OpenHIM Interoperability Proxy Route",
+      "host": "192.168.0.160",
       "port": "8300",
       "type": "http"
     }
   ],
   "configDefs": [
     {
-      "param": "upstream-scheme",
-      "displayName": "Upstream Server Scheme",
-      "type": "option",
-      "values": ["http", "https"]
-    },
-    {
       "param": "participating-systems",
       "displayName": "Participating Systems",
       "type": "string"
     },
     {
-      "param": "upstream-host",
-      "displayName": "Upstream Server Host",
-      "type": "string"
-    },
-    {
-      "param": "upstream-port",
-      "displayName": "Upstream Server Port",
-      "type": "number"
-    },
-    {
       "param": "upstream-format",
-      "displayName": "Upstream Format",
-      "description": "The format to use upstream, XML or JSON. If the 'Client' option is specified then the transaction will be forwarded unconverted in whichever format it was sent by the client or received by the upstream server.",
+      "displayName": "Supported Message Types",
+      "description": "The format to use upstream, XML or JSON.",
       "type": "option",
-      "values": ["XML", "JSON", "Client"]
+      "values": ["XML", "JSON", "ADX", "FHIR", "XML,JSON,ADX,FHIR"]
     },
     {
-      "param": "fhir-context",
-      "displayName": "FHIR Context",
+      "param": "upstream-scheme",
+      "displayName": "Supported Upstream Server Scheme",
       "type": "option",
-      "values": ["DSTU3", "fhirR4"]
+      "values": ["http", "https", "http,https"]
     },
     {
       "param": "validation-enabled",
-      "displayName": "Enable Validation",
-      "description": "If enabled, fhir documents will be validated before being sent upstream",
+      "displayName": "Enable Message Validation",
+      "description": "Enable Message Validation",
       "type": "bool"
     }
   ]

@@ -1,4 +1,4 @@
-package org.openhim.mediator.emrInterop;
+package org.openhim.mediator.hl7messageHandler;
 
 public class MessageSubscriber {
 

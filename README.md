@@ -7,3 +7,7 @@ openhim-mediator-emr-interop
 
 # License
 This software is licensed under the Mozilla Public License Version 2.0.
+
+## Running with docker
+docker image build -t openhim-mediator-hl7message-handler:latest .
+docker run --restart=always openhim-mediator-hl7message-handler:latest
