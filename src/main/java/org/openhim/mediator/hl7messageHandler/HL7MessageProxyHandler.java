@@ -61,6 +61,7 @@ public class HL7MessageProxyHandler extends UntypedActor {
         headers.put("Accept", upstreamAccept);
 
         String subscribers = (String) config.getDynamicConfig().get("participating-systems");
+
         List<String> list = Arrays.asList(subscribers.split(","));
         List<MessageSubscriber> messageSubscribers = new ArrayList<>();
         list.forEach(e -> {
@@ -92,6 +93,7 @@ public class HL7MessageProxyHandler extends UntypedActor {
         if (finalList.isEmpty()) return;
 
         finalList.forEach(e -> {
+            System.out.println("Sending message of type "+messageType+ " to upstream server "+e.getServerUrl());
 
             try {
                 URL url = new URL(e.getServerUrl());
@@ -174,11 +176,11 @@ public class HL7MessageProxyHandler extends UntypedActor {
     }
 
     private void processClientRequest() {
-            if (request.getMethod().equalsIgnoreCase("POST") || request.getMethod().equalsIgnoreCase("PUT")) {
-                processRequestWithContents();
-            } else {
-                log.info("REQUEST TYPE NOT SUPPORTED");
-            }
+        if (request.getMethod().equalsIgnoreCase("POST") || request.getMethod().equalsIgnoreCase("PUT")) {
+            processRequestWithContents();
+        } else {
+            log.info("REQUEST TYPE NOT SUPPORTED");
+        }
     }
 
     private String determineClientContentType() {
@@ -244,7 +246,6 @@ public class HL7MessageProxyHandler extends UntypedActor {
             }
         }
     }
-
 
     @Override
     public void onReceive(Object msg) throws Exception {

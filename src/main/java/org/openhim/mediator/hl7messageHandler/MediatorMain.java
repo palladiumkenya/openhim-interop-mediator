@@ -27,10 +27,10 @@ public class MediatorMain {
         return routingTable;
     }
 
-    private static MediatorConfig loadConfig(String configPath) throws IOException, RoutingTable.RouteAlreadyMappedException {
+    private static MediatorConfig loadConfig(String configPath, String regConfigPath) throws IOException, RoutingTable.RouteAlreadyMappedException {
         MediatorConfig config = new MediatorConfig();
 
-        if (configPath!=null) {
+        if (configPath!=null && regConfigPath != null) {
             Properties props = new Properties();
             File conf = new File(configPath);
             InputStream in = new FileInputStream(conf);
@@ -38,6 +38,12 @@ public class MediatorMain {
             IOUtils.closeQuietly(in);
 
             config.setProperties(props);
+
+            File regConf = new File(regConfigPath);
+            InputStream regStream = new FileInputStream(regConf);
+            RegistrationConfig regConfig = new RegistrationConfig(regStream);
+            config.setRegistrationConfig(regConfig);
+
         } else {
             config.setProperties("mediator.properties");
         }
@@ -56,10 +62,6 @@ public class MediatorMain {
 
         config.setRoutingTable(buildRoutingTable());
 //        config.setStartupActors(buildStartupActorsConfig());
-
-        InputStream regInfo = MediatorMain.class.getClassLoader().getResourceAsStream("mediator-registration-info.json");
-        RegistrationConfig regConfig = new RegistrationConfig(regInfo);
-        config.setRegistrationConfig(regConfig);
 
         // Override registration config from environment
         for (Map.Entry<String, Object> entry : config.getDynamicConfig().entrySet()) {
@@ -90,14 +92,16 @@ public class MediatorMain {
         log.info("Initializing mediator actors...");
 
         String configPath = null;
-        if (args.length==2 && args[0].equals("--conf")) {
+        String regConfigPath = null;
+        if (args.length==4 && args[0].equals("--conf") && args[2].equals("--regConf")) {
             configPath = args[1];
-            log.info("Loading mediator configuration from '" + configPath + "'...");
+            regConfigPath = args[3];
+            log.info("Loading mediator configuration from '" + configPath + "'..." +regConfigPath);
         } else {
             log.info("No configuration specified. Using default properties...");
         }
 
-        MediatorConfig config = loadConfig(configPath);
+        MediatorConfig config = loadConfig(configPath, regConfigPath);
         final MediatorServer server = new MediatorServer(system, config);
 
         //shutdown hook
